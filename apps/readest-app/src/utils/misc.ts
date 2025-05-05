@@ -32,11 +32,17 @@ export const makeSafeFilename = (filename: string, replacement = '_') => {
 };
 
 export const getUserLang = () => {
+  // Check if we're in a browser environment
+  if (typeof navigator === 'undefined' || typeof localStorage === 'undefined') return 'en';
+  
   const locale = localStorage?.getItem('i18nextLng') || navigator?.language || '';
   return locale.split('-')[0] || 'en';
 };
 
 export const isCJKEnv = () => {
+  // Check if we're in a browser environment
+  if (typeof navigator === 'undefined' || typeof localStorage === 'undefined') return false;
+  
   const browserLanguage = navigator.language || '';
   const uiLanguage = localStorage?.getItem('i18nextLng') || '';
   const isCJKUI = ['zh', 'ja', 'ko'].some((lang) => uiLanguage.startsWith(lang));
@@ -45,6 +51,9 @@ export const isCJKEnv = () => {
 };
 
 export const getUserLocale = (lang: string): string | undefined => {
+  // Check if we're in a browser environment
+  if (typeof navigator === 'undefined') return undefined;
+  
   const languages =
     navigator.languages && navigator.languages.length > 0
       ? navigator.languages
@@ -58,6 +67,9 @@ export const getUserLocale = (lang: string): string | undefined => {
 // when possible please use appService.isIOSApp || getOSPlatform() === 'ios'
 // to check if the app is running on iOS
 export const getOSPlatform = (): OsPlatform => {
+  // Check if we're running on the server (where navigator is undefined)
+  if (typeof navigator === 'undefined') return 'unknown';
+  
   const userAgent = navigator.userAgent.toLowerCase();
 
   if (/iphone|ipad|ipod/.test(userAgent)) return 'ios';
