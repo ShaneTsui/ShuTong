@@ -143,9 +143,177 @@ pnpm tauri info
 
 This command will display information about the installed Tauri dependencies and configuration on your platform. Note that the output may vary depending on the operating system and environment setup. Please review the output specific to your platform for any potential issues.
 
-For Windows targets, “Build Tools for Visual Studio 2022” (or a higher edition of Visual Studio) and the “Desktop development with C++” workflow must be installed. For Windows ARM64 targets, the “VS 2022 C++ ARM64 build tools” and "C++ Clang Compiler for Windows" components must be installed. And make sure `clang` can be found in the path by adding `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\Llvm\x64\bin` for example in the environment variable `Path`.
+For Windows targets, "Build Tools for Visual Studio 2022" (or a higher edition of Visual Studio) and the "Desktop development with C++" workflow must be installed. For Windows ARM64 targets, the "VS 2022 C++ ARM64 build tools" and "C++ Clang Compiler for Windows" components must be installed. And make sure `clang` can be found in the path by adding `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\Llvm\x64\bin` for example in the environment variable `Path`.
 
-### 4. Build for Development
+### 4. Set Up Supabase for Sync Functionality
+
+The app uses Supabase for synchronization of reading progress, bookmarks, notes, and preferences across devices.
+
+#### 4.1. Set Environment Variables
+
+Create a `.env` file in the project root directory (or copy from `.env.example` if it exists) and add the following Supabase-related variables:
+
+```
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
+
+- `NEXT_PUBLIC_SUPABASE_URL`: The URL of your Supabase project (e.g., `https://your-project-id.supabase.co`)
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`: The anonymous key for your Supabase project (found in your Supabase project settings under API)
+
+#### 4.2. Set Up Supabase Database Tables
+
+You need to create the necessary tables in your Supabase project. You can use the Supabase SQL Editor to run the following SQL commands:
+
+```sql
+-- Books table to store book metadata and progress
+create table public.books (
+  user_id uuid not null,
+  book_hash text not null,
+  format text null, -- 'EPUB' | 'PDF' | 'MOBI' | 'CBZ' | 'FB2' | 'FBZ'
+  title text null,
+  author text null,
+  "group" text null,
+  tags text[] null,
+  created_at timestamp with time zone null default now(),
+  updated_at timestamp with time zone null default now(),
+  deleted_at timestamp with time zone null,
+  uploaded_at timestamp with time zone null,
+  progress integer[] null,
+  group_id text null,
+  group_name text null,
+  constraint books_pkey primary key (user_id, book_hash),
+  constraint books_user_id_fkey foreign KEY (user_id) references auth.users (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+ALTER TABLE public.books ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY select_books ON public.books
+  FOR SELECT to authenticated USING ((select auth.uid()) = user_id);
+CREATE POLICY insert_books ON public.books
+  FOR INSERT to authenticated WITH CHECK ((select auth.uid()) = user_id);
+CREATE POLICY update_books ON public.books
+  FOR UPDATE to authenticated USING ((select auth.uid()) = user_id);
+CREATE POLICY delete_books ON public.books
+  FOR DELETE to authenticated USING ((select auth.uid()) = user_id);
+
+-- Book configurations table to store view settings and progress
+create table public.book_configs (
+  user_id uuid not null,
+  book_hash text not null,
+  location text null,
+  progress jsonb null,
+  search_config jsonb null,
+  view_settings jsonb null,
+  created_at timestamp with time zone null default now(),
+  updated_at timestamp with time zone null default now(),
+  deleted_at timestamp with time zone null,
+  constraint book_configs_pkey primary key (user_id, book_hash),
+  constraint book_configs_user_id_fkey foreign KEY (user_id) references auth.users (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+ALTER TABLE public.book_configs ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY select_book_configs ON public.book_configs
+  FOR SELECT to authenticated USING ((select auth.uid()) = user_id);
+CREATE POLICY insert_book_configs ON public.book_configs
+  FOR INSERT to authenticated WITH CHECK ((select auth.uid()) = user_id);
+CREATE POLICY update_book_configs ON public.book_configs
+  FOR UPDATE to authenticated USING ((select auth.uid()) = user_id);
+CREATE POLICY delete_book_configs ON public.book_configs
+  FOR DELETE to authenticated USING ((select auth.uid()) = user_id);
+
+-- Book notes table to store annotations, highlights, and bookmarks
+create table public.book_notes (
+  user_id uuid not null,
+  book_hash text not null,
+  id text not null,
+  type text null,
+  cfi text null,
+  text text null,
+  style text null,
+  color text null,
+  note text null,
+  created_at timestamp with time zone null default now(),
+  updated_at timestamp with time zone null default now(),
+  deleted_at timestamp with time zone null,
+  constraint book_notes_pkey primary key (user_id, book_hash, id),
+  constraint book_notes_user_id_fkey foreign KEY (user_id) references auth.users (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+ALTER TABLE public.book_notes ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY select_book_notes ON public.book_notes
+  FOR SELECT to authenticated USING ((select auth.uid()) = user_id);
+CREATE POLICY insert_book_notes ON public.book_notes
+  FOR INSERT to authenticated WITH CHECK ((select auth.uid()) = user_id);
+CREATE POLICY update_book_notes ON public.book_notes
+  FOR UPDATE to authenticated USING ((select auth.uid()) = user_id);
+CREATE POLICY delete_book_notes ON public.book_notes
+  FOR DELETE to authenticated USING ((select auth.uid()) = user_id);
+
+-- Files table to store book files
+create table public.files (
+  id uuid not null default gen_random_uuid (),
+  user_id uuid not null,
+  book_hash text null,
+  file_key text not null,
+  file_size bigint not null,
+  created_at timestamp with time zone null default now(),
+  deleted_at timestamp with time zone null,
+  constraint files_pkey primary key (id),
+  constraint files_file_key_key unique (file_key),
+  constraint files_user_id_fkey foreign KEY (user_id) references auth.users (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+-- Add indexes for efficient querying
+create index idx_files_user_id_deleted_at
+on public.files (user_id, deleted_at);
+
+create index idx_files_file_key
+on public.files (file_key);
+
+create index idx_files_file_key_deleted_at
+on public.files (file_key, deleted_at);
+
+-- Enable RLS on the files table
+alter table public.files enable row level security;
+
+create policy "Users can view their own active files"
+on public.files
+for select
+using (
+  auth.uid() = user_id and deleted_at is null
+);
+
+create policy "Users can soft-delete their own files"
+on public.files
+for update
+using (
+  auth.uid() = user_id
+)
+with check (
+  deleted_at is null or deleted_at > now()
+);
+
+create policy "Users can delete their own files permanently"
+on public.files
+for delete
+using (
+  auth.uid() = user_id
+);
+```
+
+#### 4.3. Alternative: Local Supabase Development
+
+For local development, you can use Supabase CLI:
+
+1. Install Supabase CLI: `npm install -g supabase`
+2. Start local Supabase: `supabase start`
+3. Copy the provided URL and anon key to your `.env` file
+4. Run the SQL script: `supabase db reset` (after saving the above SQL in `supabase/migrations`)
+
+### 5. Build for Development
 
 ```bash
 # Start development for the Tauri app
@@ -176,7 +344,7 @@ pnpm tauri ios dev
 pnpm tauri ios dev --host
 ```
 
-### 5. Build for Production
+### 6. Build for Production
 
 ```bash
 pnpm tauri build
@@ -184,7 +352,7 @@ pnpm tauri android build
 pnpm tauri ios build
 ```
 
-### 6. Setup dev environment with Nix
+### 7. Setup dev environment with Nix
 
 If you have Nix installed, you can leverage flake to enter a development shell
 with all the necessary dependencies:
@@ -195,13 +363,13 @@ nix develop ./ops#ios # enter a dev shell for the ios app
 nix develop ./ops#android # enter a dev shell for the android app
 ```
 
-### 7. More information
+### 8. More information
 
 Please check the [wiki][link-gh-wiki] of this project for more information on development.
 
 ## Troubleshooting
 
-### 1. Readest Won’t Launch on Windows (Missing Edge WebView2 Runtime)
+### 1. Readest Won't Launch on Windows (Missing Edge WebView2 Runtime)
 
 **Symptom**
 
@@ -215,7 +383,7 @@ Please check the [wiki][link-gh-wiki] of this project for more information on de
 **How to Fix**
 
 1. Check if WebView2 is installed
-   - Open “Add or Remove Programs” (a.k.a. Apps & features) on Windows. Look for “Microsoft Edge WebView2 Runtime.”
+   - Open "Add or Remove Programs" (a.k.a. Apps & features) on Windows. Look for "Microsoft Edge WebView2 Runtime."
 2. Install or Update WebView2
    - Download the WebView2 Runtime directly from Microsoft: [link](https://developer.microsoft.com/en-us/microsoft-edge/webview2?form=MA13LH).
    - If you prefer an offline installer, download the offline package and run it as an Administrator.
@@ -225,12 +393,12 @@ Please check the [wiki][link-gh-wiki] of this project for more information on de
 
 **Additional Tips**
 
-- If reinstalling once doesn’t work, uninstall Edge WebView2 completely, then reinstall it with Administrator privileges.
+- If reinstalling once doesn't work, uninstall Edge WebView2 completely, then reinstall it with Administrator privileges.
 - Verify your Windows installation has the latest updates from Microsoft.
 
 **Still Stuck?**
 
-- See Issue [readest/readest#358](https://github.com/readest/readest/issues/358) for further details, or head over to our [Discord][link-discord] server and open a support discussion with detailed logs of your environment and the steps you’ve taken.
+- See Issue [readest/readest#358](https://github.com/readest/readest/issues/358) for further details, or head over to our [Discord][link-discord] server and open a support discussion with detailed logs of your environment and the steps you've taken.
 
 ## Contributors
 
